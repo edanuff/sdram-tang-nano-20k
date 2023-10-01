@@ -28,7 +28,7 @@ module tb_Sdram;
     wire SDRAM_nCAS; // CAS#
     wire SDRAM_nWE; // WE#
     wire [3 : 0] SDRAM_DQM; // I/O Mask
-    wire SDRAM_CMD = {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE};
+    wire [2 : 0] SDRAM_CMD = {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE};
 
    // VCD Dumping
     initial begin
