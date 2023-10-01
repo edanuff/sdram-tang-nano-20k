@@ -27,20 +27,22 @@
 
 module sdram
 #(
-    // Clock frequency, max 66.7Mhz with current set of T_xx/CAS parameters.
+    // Clock frequency, 100Mhz with current set of T_xx/CAS parameters.
     parameter         FREQ = 100_000_000,  
     parameter         DATA_WIDTH = 32,
     parameter         ROW_WIDTH = 11,  // 2K rows
     parameter         COL_WIDTH = 8,   // 256 words per row (1Kbytes)
     parameter         BANK_WIDTH = 2,  // 4 banks
 
-    // Time delays for 66.7Mhz max clock (min clock cycle 15ns)
+    parameter         AUTO_REFRESH_TIMER = 1,  // enable auto-refresh
+
+    // Time delays for 100Mhz max clock CL3 (min clock cycle 15ns)
     // The SDRAM supports max 166.7Mhz (RP/RCD/RC need changes)
     parameter [4:0]   CAS  = 5'd3,     // 2/3 cycles, set in mode register
     parameter [4:0]   T_WR = 5'd2,     // 2 cycles, write recovery
     parameter [4:0]   T_MRD= 5'd2,     // 2 cycles, mode register set
-    parameter [4:0]   T_RP = 5'd2,     // 15ns, precharge to active
-    parameter [4:0]   T_RCD= 5'd2,     // 15ns, active to r/w
+    parameter [4:0]   T_RP = 5'd2,     // 20ns, precharge to active
+    parameter [4:0]   T_RCD= 5'd2,     // 20ns, active to r/w
     parameter [4:0]   T_RC = 5'd6      // 60ns, ref/active to ref/active
 )
 (
@@ -96,6 +98,7 @@ localparam IDLE = 3'd2;
 localparam READ = 3'd3;
 localparam WRITE = 3'd4;
 localparam REFRESH = 3'd5;
+wire running = (state != INIT) && (state != CONFIG);
 
 // RAS# CAS# WE#
 localparam CMD_SetModeReg=3'b000;  //0
@@ -115,11 +118,15 @@ reg [4:0] cycle;        // each operation (config/read/write) are max 7 cycles
 reg [7:0] din_buf;      // set at wr=1 pulse time
 reg [22:0] addr_buf;
 
+reg refresh_needed;
+reg refresh_executed;                           // pulse from main FSM
+
 //
 // SDRAM state machine
 //
 always @(posedge clk) begin
     data_ready <= 1'b0;
+    refresh_executed <= 1'b0;
     cycle <= cycle == 5'd31 ? 5'd31 : cycle + 5'd1;
     // defaults
     {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE} <= CMD_NOP; 
@@ -164,7 +171,7 @@ always @(posedge clk) begin
         
         // read/write/refresh
         {IDLE, 5'bxxxx}: if (rd | wr) begin
-            $display ("%m : at time %t IDLE : bank activate", $time);
+            $display ("%m : at time %t IDLE : bank activate for READ/WRITE", $time);
             // bank activate
             {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE} <= CMD_BankActivate;
             SDRAM_BA <= addr[ROW_WIDTH+COL_WIDTH+BANK_WIDTH-1+2 : ROW_WIDTH+COL_WIDTH+2];    // bank id
@@ -174,13 +181,15 @@ always @(posedge clk) begin
             if (wr) din_buf <= din;
             cycle <= 5'd1;
             busy <= 1'b1;
-        end else if (refresh) begin
+        end else if (refresh_needed || refresh) begin
+            $display ("%m : at time %t IDLE : REFRESH initiated", $time);
             // auto-refresh
             // no need for precharge-all b/c all our r/w are done with auto-precharge.
             {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE} <= CMD_AutoRefresh;
             state <= REFRESH;
             cycle <= 5'd1;
             busy <= 1'b1;
+            refresh_executed <= 1'b1;
         end
 
         // read sequence
@@ -247,7 +256,7 @@ always @(posedge clk) begin
         //  busy     _______/                               \_______
         //                  `------------- T_RC ------------'
         {REFRESH, T_RC}: begin
-            $display ("%m : at time %t REFRESH", $time);
+            $display ("%m : at time %t REFRESH : done", $time);
             state <= IDLE;
             busy <= 0;
         end
@@ -289,5 +298,25 @@ always @(posedge clk) begin
         cfg_busy <= 1'b1;
     end
 end
+
+localparam REFRESH_COUNT=FREQ/1000/1000*15;     // 15us refresh
+reg [11:0] refresh_time;
+always @(posedge clk) begin
+    if (~resetn) begin
+        refresh_time <= 0;
+        refresh_needed <= 0;
+    end else if (AUTO_REFRESH_TIMER & running) begin
+        refresh_time <= (refresh_time == (REFRESH_COUNT*2-2)) ? (REFRESH_COUNT*2-2) : refresh_time + 1;
+        if (refresh_time == REFRESH_COUNT) begin
+            refresh_needed <= 1;
+            $display ("%m : at time %t REFRESH NEEDED", $time);
+        end
+        if (refresh_executed) begin
+            refresh_time <= refresh_time - REFRESH_COUNT;
+            refresh_needed <= 0;
+        end
+    end
+end
+
 
 endmodule
