@@ -113,6 +113,7 @@ module tb_Sdram;
    
         // Start simple tests
         #1000;
+        $display("Time: %0t | WRITE ADDRESS 1 ----------------------------------------------", $time);
         wr = 1;
         addr = 23'd1;
         din = 8'hA5;
@@ -124,6 +125,7 @@ module tb_Sdram;
  
         //#50;
         #60;
+        $display("Time: %0t | READ ADDRESS 1 ----------------------------------------------", $time);
         rd = 1;
         addr = 23'd1;
 
